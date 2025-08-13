@@ -2,6 +2,7 @@ import streamlit as st
 import streamlit_antd_components as sac
 import os
 import shutil
+from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
@@ -11,10 +12,13 @@ from langchain.schema.runnable import RunnablePassthrough
 from langchain.schema.output_parser import StrOutputParser
 
 # --- CONFIGURATION ---
-# Set this to your local LLM's API endpoint
-# For example, if you are using LM Studio, it might be "http://localhost:1234/v1"
-API_BASE_URL = "http://localhost:1234/v1"
-API_KEY = "not-needed" # Often not needed for local models
+# Load environment variables from .env file
+load_dotenv()
+
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:1234/v1")
+API_KEY = os.getenv("API_KEY", "not-needed")
+LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "default-model")
+EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "default-embedding-model")
 
 # Paths for data storage
 DATA_PATH = "data"
@@ -78,7 +82,11 @@ def build_knowledge_base(uploaded_files):
         chunks = text_splitter.split_documents(documents)
 
         # 3. Create embeddings and ChromaDB vector store
-        embeddings = OpenAIEmbeddings(openai_api_base=API_BASE_URL, openai_api_key=API_KEY)
+        embeddings = OpenAIEmbeddings(
+            model=EMBEDDING_MODEL_NAME,
+            openai_api_base=API_BASE_URL,
+            openai_api_key=API_KEY
+        )
 
         try:
             vector_store = Chroma.from_documents(
@@ -128,12 +136,21 @@ def perform_audit(audit_file):
                 return
 
             # Initialize embeddings and load the vector store
-            embeddings = OpenAIEmbeddings(openai_api_base=API_BASE_URL, openai_api_key=API_KEY)
+            embeddings = OpenAIEmbeddings(
+                model=EMBEDDING_MODEL_NAME,
+                openai_api_base=API_BASE_URL,
+                openai_api_key=API_KEY
+            )
             vector_store = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
             retriever = vector_store.as_retriever(search_kwargs={"k": 3})
 
             # Initialize the LLM
-            llm = ChatOpenAI(temperature=0.1, openai_api_base=API_BASE_URL, openai_api_key=API_KEY)
+            llm = ChatOpenAI(
+                model=LLM_MODEL_NAME,
+                temperature=0.1,
+                openai_api_base=API_BASE_URL,
+                openai_api_key=API_KEY
+            )
 
             # This prompt guides the LLM to act as a compliance officer.
             COMPLIANCE_PROMPT = ChatPromptTemplate.from_template(

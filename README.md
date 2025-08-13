@@ -53,19 +53,21 @@ pip install -r requirements.txt
 ```
 *Note: Depending on your system, `chromadb` might require C++ build tools. If you encounter installation issues, please consult the [ChromaDB documentation](https://docs.trychroma.com/getting-started).*
 
-### 4. Configure the LLM Endpoint
+### 4. Configure the Application
 
-Open the `app.py` file in your editor and modify the configuration variables at the top of the script:
+Configuration is managed using a `.env` file for security and flexibility.
 
-```python
-# --- CONFIGURATION ---
-# Set this to your local LLM's API endpoint
-# For example, if you are using LM Studio, it might be "http://localhost:1234/v1"
-API_BASE_URL = "http://localhost:1234/v1"
-API_KEY = "not-needed" # Often not needed for local models
-```
-- **`API_BASE_URL`**: Change this to the URL provided by your local LLM server.
-- **`API_KEY`**: Update this if your server requires an API key. For most local servers, the default `"not-needed"` is sufficient.
+1.  **Create a `.env` file**: In the root of the project, rename the `.env.example` file to `.env`.
+    ```bash
+    mv .env.example .env
+    ```
+
+2.  **Edit the `.env` file**: Open the new `.env` file and customize the variables.
+
+    -   `API_BASE_URL`: The full URL to your local LLM's OpenAI-compatible API endpoint.
+    -   `API_KEY`: The API key for your service. For many local models, this can be left as `not-needed`.
+    -   `LLM_MODEL_NAME`: The specific model identifier your LLM service uses for chat/instruct tasks.
+    -   `EMBEDDING_MODEL_NAME`: The specific model identifier for the text embedding model. **This must be a dedicated embedding model** for the application to function correctly.
 
 ### 5. Run the Application
 

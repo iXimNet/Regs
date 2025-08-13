@@ -7,5 +7,6 @@ pypdf
 python-docx
 chromadb
 tiktoken
+python-dotenv
 # Note: Depending on your environment, you might need to install C++ build tools for ChromaDB.
 # If you encounter issues, refer to ChromaDB's documentation.
