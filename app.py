@@ -1,6 +1,7 @@
 import streamlit as st
 import streamlit_antd_components as sac
 import os
+import shutil
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
@@ -91,149 +92,156 @@ def build_knowledge_base(uploaded_files):
             st.error(f"An error occurred while building the vector store: {e}", icon="🚨")
             st.session_state.kb_built = False
 
+def clear_knowledge_base():
+    """
+    Deletes the data and vector store directories, effectively clearing the knowledge base.
+    """
+    try:
+        if os.path.exists(CHROMA_PATH):
+            shutil.rmtree(CHROMA_PATH)
+        if os.path.exists(DATA_PATH):
+            shutil.rmtree(DATA_PATH)
+        st.session_state.kb_built = False
+        st.session_state.current_kb_step = 0
+        st.session_state.report = None
+        st.toast("Knowledge Base cleared successfully!", icon="✅")
+    except Exception as e:
+        st.error(f"An error occurred while clearing the knowledge base: {e}", icon="🚨")
+
 
 def perform_audit(audit_file):
     """
     Performs the compliance and consistency audit on the uploaded file.
     Generates a structured report using the LLM.
     """
-    with st.spinner("Performing audit... This involves multiple AI calls and may take some time."):
-        # Save and load the audit document
-        audit_file_path = os.path.join(DATA_PATH, audit_file.name)
-        with open(audit_file_path, "wb") as f:
-            f.write(audit_file.getbuffer())
+    try:
+        with st.spinner("Performing audit... This involves multiple AI calls and may take some time."):
+            # Save and load the audit document
+            audit_file_path = os.path.join(DATA_PATH, audit_file.name)
+            with open(audit_file_path, "wb") as f:
+                f.write(audit_file.getbuffer())
 
-        audit_docs = load_documents(DATA_PATH) # Reload to get the new doc
+            audit_docs = load_documents(DATA_PATH) # Reload to get the new doc
 
-        if not audit_docs:
-            st.error("Failed to load the audit document.", icon="🚨")
-            return
+            if not audit_docs:
+                st.error("Failed to load the audit document.", icon="🚨")
+                return
 
-        # Initialize embeddings and load the vector store
-        embeddings = OpenAIEmbeddings(openai_api_base=API_BASE_URL, openai_api_key=API_KEY)
-        vector_store = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
-        retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+            # Initialize embeddings and load the vector store
+            embeddings = OpenAIEmbeddings(openai_api_base=API_BASE_URL, openai_api_key=API_KEY)
+            vector_store = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
+            retriever = vector_store.as_retriever(search_kwargs={"k": 3})
 
-        # Initialize the LLM
-        llm = ChatOpenAI(temperature=0.1, openai_api_base=API_BASE_URL, openai_api_key=API_KEY)
+            # Initialize the LLM
+            llm = ChatOpenAI(temperature=0.1, openai_api_base=API_BASE_URL, openai_api_key=API_KEY)
 
-        # Define RAG chain prompts
-        # Note: These prompts are designed to be generic. For better results,
-        # they should be fine-tuned based on specific compliance requirements.
+            # This prompt guides the LLM to act as a compliance officer.
+            COMPLIANCE_PROMPT = ChatPromptTemplate.from_template(
+                """
+                **Role**: You are a professional financial compliance officer.
+                **Task**: Analyze the following clause from a new internal policy and check for potential conflicts with the provided external regulatory articles.
 
-        # This prompt guides the LLM to act as a compliance officer.
-        COMPLIANCE_PROMPT = ChatPromptTemplate.from_template(
-            """
-            **Role**: You are a professional financial compliance officer.
-            **Task**: Analyze the following clause from a new internal policy and check for potential conflicts with the provided external regulatory articles.
+                **New Policy Clause**:
+                ---
+                {clause}
+                ---
 
-            **New Policy Clause**:
-            ---
-            {clause}
-            ---
+                **Relevant External Regulatory Articles**:
+                ---
+                {context}
+                ---
 
-            **Relevant External Regulatory Articles**:
-            ---
-            {context}
-            ---
-
-            **Analysis Instructions**:
-            1.  Carefully compare the "New Policy Clause" with the "Relevant External Regulatory Articles".
-            2.  Identify any direct contradictions, subtle inconsistencies, or areas where the policy fails to meet regulatory standards.
-            3.  If a conflict is found, clearly state the conflict and cite the specific part of the regulation.
-            4.  If the clause is compliant, state that no issues were found.
-            5.  Your response must be concise and focused solely on compliance analysis.
-            """
-        )
-
-        # This prompt guides the LLM to check for internal consistency.
-        CONSISTENCY_PROMPT = ChatPromptTemplate.from_template(
-            """
-            **Role**: You are a senior policy analyst at a financial institution.
-            **Task**: Analyze the following clause from a new draft policy and check for inconsistencies with the provided historical internal policies.
-
-            **New Policy Clause**:
-            ---
-            {clause}
-            ---
-
-            **Relevant Historical Internal Policy Articles**:
-            ---
-            {context}
-            ---
-
-            **Analysis Instructions**:
-            1.  Compare the "New Policy Clause" with the "Relevant Historical Internal Policy Articles".
-            2.  Identify any contradictions, significant deviations, or duplications.
-            3.  If an inconsistency is found, describe it clearly and reference the historical policy.
-            4.  If the clause is consistent, state that.
-            5.  Your response must be concise and focused solely on internal consistency.
-            """
-        )
-
-        # Split the audit document to analyze it chunk by chunk
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-        audit_chunks = text_splitter.split_documents(audit_docs)
-
-        analysis_results = []
-        for i, chunk in enumerate(audit_chunks):
-            st.progress((i + 1) / len(audit_chunks), text=f"Analyzing chunk {i+1} of {len(audit_chunks)}...")
-
-            # Create chains for each analysis type
-            compliance_chain = (
-                {"context": retriever, "clause": RunnablePassthrough()}
-                | COMPLIANCE_PROMPT
-                | llm
-                | StrOutputParser()
-            )
-            consistency_chain = (
-                {"context": retriever, "clause": RunnablePassthrough()}
-                | CONSISTENCY_PROMPT
-                | llm
-                | StrOutputParser()
+                **Analysis Instructions**:
+                1.  Carefully compare the "New Policy Clause" with the "Relevant External Regulatory Articles".
+                2.  Identify any direct contradictions, subtle inconsistencies, or areas where the policy fails to meet regulatory standards.
+                3.  If a conflict is found, clearly state the conflict and cite the specific part of the regulation.
+                4.  If the clause is compliant, state that no issues were found.
+                5.  Your response must be concise and focused solely on compliance analysis.
+                """
             )
 
-            # Invoke chains
-            compliance_result = compliance_chain.invoke(chunk.page_content)
-            consistency_result = consistency_chain.invoke(chunk.page_content)
+            # This prompt guides the LLM to check for internal consistency.
+            CONSISTENCY_PROMPT = ChatPromptTemplate.from_template(
+                """
+                **Role**: You are a senior policy analyst at a financial institution.
+                **Task**: Analyze the following clause from a new draft policy and check for inconsistencies with the provided historical internal policies.
 
-            analysis_results.append(
-                f"### Analysis of Document Section (starting with: '{chunk.page_content[:100]}...')\n\n"
-                f"**Compliance Check:**\n{compliance_result}\n\n"
-                f"**Internal Consistency Check:**\n{consistency_result}\n\n---\n"
+                **New Policy Clause**:
+                ---
+                {clause}
+                ---
+
+                **Relevant Historical Internal Policy Articles**:
+                ---
+                {context}
+                ---
+
+                **Analysis Instructions**:
+                1.  Compare the "New Policy Clause" with the "Relevant Historical Internal Policy Articles".
+                2.  Identify any contradictions, significant deviations, or duplications.
+                3.  If an inconsistency is found, describe it clearly and reference the historical policy.
+                4.  If the clause is consistent, state that.
+                5.  Your response must be concise and focused solely on internal consistency.
+                """
             )
 
-        # Final report generation
-        st.progress(1.0, text="Synthesizing final report...")
+            # Split the audit document to analyze it chunk by chunk
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+            audit_docs_for_splitting = [doc for doc in audit_docs if os.path.basename(doc.metadata.get('source', '')) == audit_file.name]
+            audit_chunks = text_splitter.split_documents(audit_docs_for_splitting)
 
-        SUMMARY_PROMPT = ChatPromptTemplate.from_template(
-            """
-            **Role**: You are a Chief Compliance Officer tasked with creating a final audit report.
-            **Task**: Synthesize the following chunk-by-chunk analyses into a single, structured, and professional report.
 
-            **Individual Analysis Results**:
-            ---
-            {analysis_results}
-            ---
+            analysis_results = []
+            for i, chunk in enumerate(audit_chunks):
+                st.progress((i + 1) / len(audit_chunks), text=f"Analyzing chunk {i+1} of {len(audit_chunks)}...")
 
-            **Report Generation Instructions**:
-            1.  Read all the individual analysis results provided.
-            2.  Generate a final report in Markdown format with the following four sections, using the exact headers:
-                - `### Overall Conclusion`
-                - `### Compliance Analysis`
-                - `### Internal Consistency Analysis`
-                - `### Improvement Suggestions`
-            3.  **Overall Conclusion**: Provide a high-level summary. Start with a risk assessment using one of these keywords: **High-Risk**, **Medium-Risk**, **Low-Risk**, or **Compliant**.
-            4.  **Compliance Analysis**: Consolidate all identified compliance issues into a bulleted list. If no issues, state that.
-            5.  **Internal Consistency Analysis**: Consolidate all identified inconsistencies into a bulleted list. If no issues, state that.
-            6.  **Improvement Suggestions**: Based on the issues found, provide actionable recommendations for improving the policy document.
-            """
-        )
+                compliance_chain = ({"context": retriever, "clause": RunnablePassthrough()} | COMPLIANCE_PROMPT | llm | StrOutputParser())
+                consistency_chain = ({"context": retriever, "clause": RunnablePassthrough()} | CONSISTENCY_PROMPT | llm | StrOutputParser())
 
-        final_report_chain = SUMMARY_PROMPT | llm | StrOutputParser()
-        final_report = final_report_chain.invoke({"analysis_results": "\n".join(analysis_results)})
+                compliance_result = compliance_chain.invoke(chunk.page_content)
+                consistency_result = consistency_chain.invoke(chunk.page_content)
 
-        st.session_state.report = final_report
+                analysis_results.append(
+                    f"### Analysis of Document Section (starting with: '{chunk.page_content[:100]}...')\n\n"
+                    f"**Compliance Check:**\n{compliance_result}\n\n"
+                    f"**Internal Consistency Check:**\n{consistency_result}\n\n---\n"
+                )
+
+            # Final report generation
+            st.progress(1.0, text="Synthesizing final report...")
+
+            SUMMARY_PROMPT = ChatPromptTemplate.from_template(
+                """
+                **Role**: You are a Chief Compliance Officer tasked with creating a final audit report.
+                **Task**: Synthesize the following chunk-by-chunk analyses into a single, structured, and professional report.
+
+                **Individual Analysis Results**:
+                ---
+                {analysis_results}
+                ---
+
+                **Report Generation Instructions**:
+                1.  Read all the individual analysis results provided.
+                2.  Generate a final report in Markdown format with the following four sections, using the exact headers:
+                    - `### Overall Conclusion`
+                    - `### Compliance Analysis`
+                    - `### Internal Consistency Analysis`
+                    - `### Improvement Suggestions`
+                3.  **Overall Conclusion**: Provide a high-level summary. Start with a risk assessment using one of these keywords: **High-Risk**, **Medium-Risk**, **Low-Risk**, or **Compliant**.
+                4.  **Compliance Analysis**: Consolidate all identified compliance issues into a bulleted list. If no issues, state that.
+                5.  **Internal Consistency Analysis**: Consolidate all identified inconsistencies into a bulleted list. If no issues, state that.
+                6.  **Improvement Suggestions**: Based on the issues found, provide actionable recommendations for improving the policy document.
+                """
+            )
+
+            final_report_chain = SUMMARY_PROMPT | llm | StrOutputParser()
+            final_report = final_report_chain.invoke({"analysis_results": "\n".join(analysis_results)})
+
+            st.session_state.report = final_report
+    except Exception as e:
+        st.error(f"An error occurred during the audit process: {e}", icon="🚨")
+        st.error("This could be due to an issue with the local LLM connection or a problem with the document. Please check the console for more details.", icon="ℹ️")
+        st.session_state.report = None
 
 
 # --- STREAMLIT UI ---
@@ -286,30 +294,40 @@ if selected_tab == 'Knowledge Base Management':
     if uploaded_files:
         st.session_state.current_kb_step = 1
 
-    st.subheader("2. Build Knowledge Base")
-    if sac.buttons([sac.ButtonsItem(label='Start Building Knowledge Base', icon='tools', color='primary')], index=None):
-        if uploaded_files:
-            build_knowledge_base(uploaded_files)
-            if st.session_state.kb_built:
-                st.session_state.current_kb_step = 2
+    st.subheader("2. Build or Clear Knowledge Base")
+
+    # Use columns for side-by-side buttons
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Start Building Knowledge Base", type="primary", use_container_width=True):
+            if uploaded_files:
+                build_knowledge_base(uploaded_files)
+                if st.session_state.kb_built:
+                    st.session_state.current_kb_step = 2
+                    sac.alert(
+                        label='Success!',
+                        description='The knowledge base has been successfully built and is ready for use.',
+                        color='success',
+                        closable=True,
+                        icon=True
+                    )
+            else:
                 sac.alert(
-                    label='Success!',
-                    description='The knowledge base has been successfully built and is ready for use.',
-                    color='success',
+                    label='No Files Uploaded',
+                    description='Please upload at least one reference document before building the knowledge base.',
+                    color='warning',
                     closable=True,
                     icon=True
                 )
-        else:
-            sac.alert(
-                label='No Files Uploaded',
-                description='Please upload at least one reference document before building the knowledge base.',
-                color='warning',
-                closable=True,
-                icon=True
-            )
+
+    with col2:
+        if st.button("Clear Knowledge Base", type="secondary", use_container_width=True):
+            clear_knowledge_base()
+            st.rerun()
 
     if st.session_state.kb_built:
         st.session_state.current_kb_step = 2
+        st.info("Knowledge base is ready. You can proceed to the 'Institutional Audit' tab.", icon="✅")
 
 
 # --- INSTITUTIONAL AUDIT TAB ---
