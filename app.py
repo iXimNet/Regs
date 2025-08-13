@@ -57,9 +57,12 @@ def build_knowledge_base(uploaded_files):
         st.warning("Please upload at least one document.", icon="⚠️")
         return
 
-    # Create data directory if it doesn't exist
-    if not os.path.exists(DATA_PATH):
-        os.makedirs(DATA_PATH)
+    # Clear the existing data directory to ensure a fresh start
+    if os.path.exists(DATA_PATH):
+        shutil.rmtree(DATA_PATH)
+
+    # Create the data directory
+    os.makedirs(DATA_PATH)
 
     # Save uploaded files to the data directory
     for file in uploaded_files:
