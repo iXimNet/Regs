@@ -411,12 +411,13 @@ if selected_tab == 'Institutional Audit':
                 suggestions_section = "Could not parse suggestions section."
 
 
-            sac.collapse(
+            sac.accordion(
                 items=[
-                    sac.CollapseItem(label='Compliance Analysis', icon='check-circle', children=[st.markdown(compliance_section)]),
-                    sac.CollapseItem(label='Internal Consistency Analysis', icon='copy', children=[st.markdown(consistency_section)]),
-                    sac.CollapseItem(label='Improvement Suggestions', icon='lightbulb', children=[st.markdown(suggestions_section)]),
+                    sac.AccordionItem(label='Compliance Analysis', icon='check-circle', children=[st.markdown(compliance_section)]),
+                    sac.AccordionItem(label='Internal Consistency Analysis', icon='copy', children=[st.markdown(consistency_section)]),
+                    sac.AccordionItem(label='Improvement Suggestions', icon='lightbulb', children=[st.markdown(suggestions_section)]),
                 ],
                 multiple=True,
-                open_all=True
+                open_all=True,
+                key="audit_report_accordion"
             )
