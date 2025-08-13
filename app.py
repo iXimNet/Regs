@@ -269,7 +269,7 @@ selected_tab = sac.tabs([
 
 # --- KNOWLEDGE BASE MANAGEMENT TAB ---
 if selected_tab == 'Knowledge Base Management':
-    st.header("Knowledge Base Management",- "database-add")
+    st.header("Knowledge Base Management")
 
     sac.steps(
         items=[
@@ -332,7 +332,7 @@ if selected_tab == 'Knowledge Base Management':
 
 # --- INSTITUTIONAL AUDIT TAB ---
 if selected_tab == 'Institutional Audit':
-    st.header("Institutional Audit", "file-search")
+    st.header("Institutional Audit")
 
     if not st.session_state.kb_built:
         sac.alert(
