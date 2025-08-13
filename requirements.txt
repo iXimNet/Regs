@@ -5,6 +5,7 @@ langchain-openai
 langchain-community
 pypdf
 python-docx
+docx2txt
 chromadb
 tiktoken
 python-dotenv
