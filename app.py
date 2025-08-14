@@ -110,26 +110,34 @@ def add_to_knowledge_base(uploaded_files):
         )
 
         try:
-            if os.path.exists(CHROMA_PATH):
-                # Add to an existing vector store
-                vector_store = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
-                vector_store.add_documents(documents=chunks, ids=ids)
-                st.toast(f"成功将 {len(uploaded_files)} 个文档添加到知识库！")
-            else:
-                # Create a new vector store
-                vector_store = Chroma.from_documents(
-                    documents=chunks,
-                    embedding=embeddings,
-                    ids=ids,
-                    persist_directory=CHROMA_PATH
-                )
-                st.toast(f"成功创建知识库并添加了 {len(uploaded_files)} 个文档！")
+            vector_store = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
+
+            # Process documents in batches to avoid overwhelming the server
+            batch_size = 16
+            for i in range(0, len(chunks), batch_size):
+                batch_chunks = chunks[i:i + batch_size]
+                batch_ids = ids[i:i + batch_size]
+
+                if i == 0 and not os.path.exists(CHROMA_PATH):
+                     # Create a new vector store with the first batch
+                    Chroma.from_documents(
+                        documents=batch_chunks,
+                        embedding=embeddings,
+                        ids=batch_ids,
+                        persist_directory=CHROMA_PATH
+                    )
+                else:
+                    # Add subsequent batches to the existing vector store
+                    vector_store.add_documents(documents=batch_chunks, ids=batch_ids)
+
+                st.toast(f"已处理 {i + len(batch_chunks)} / {len(chunks)} 个文本片段...")
 
             vector_store.persist()
             st.session_state.kb_built = True
+            st.toast(f"成功处理了 {len(uploaded_files)} 个文档！", icon="✅")
         except Exception as e:
             st.error(f"向知识库添加文档时出错: {e}", icon="🚨")
-            st.session_state.kb_built = False
+            # Do not set kb_built to False on a failed addition
 
 def clear_knowledge_base():
     """
