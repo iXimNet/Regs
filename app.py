@@ -2,6 +2,8 @@ import streamlit as st
 import streamlit_antd_components as sac
 import os
 import shutil
+import json
+from datetime import datetime
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -28,8 +30,23 @@ EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "default-embedding-mode
 # Paths for data storage
 DATA_PATH = "data"
 CHROMA_PATH = "chroma_db"
+METADATA_PATH = os.path.join(DATA_PATH, "metadata.json")
 
-# --- HELPER FUNCTIONS ---
+# --- METADATA HELPER FUNCTIONS ---
+
+def read_metadata():
+    """Reads the metadata file and returns a dictionary."""
+    if not os.path.exists(METADATA_PATH):
+        return {}
+    with open(METADATA_PATH, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+def write_metadata(data):
+    """Writes a dictionary to the metadata file."""
+    with open(METADATA_PATH, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=4)
+
+# --- CORE HELPER FUNCTIONS ---
 
 def load_documents(directory_path):
     """
@@ -68,16 +85,25 @@ def add_to_knowledge_base(uploaded_files):
         shutil.rmtree(temp_dir)
     os.makedirs(temp_dir)
 
-    saved_files_paths = []
+    metadata = read_metadata()
+
     for file in uploaded_files:
         # Save to permanent storage
         perm_path = os.path.join(DATA_PATH, file.name)
         with open(perm_path, "wb") as f:
             f.write(file.getbuffer())
+
+        # Update metadata
+        metadata[file.name] = {
+            "upload_time": datetime.now().isoformat()
+        }
+
         # Save to temp dir for processing this batch only
         temp_path = os.path.join(temp_dir, file.name)
         with open(temp_path, "wb") as f:
             f.write(file.getbuffer())
+
+    write_metadata(metadata)
 
     with st.spinner("正在处理新文档，请稍候..."):
         # Load only the new documents from the temporary directory
@@ -165,6 +191,12 @@ def delete_from_knowledge_base(filename_to_delete):
         file_path = os.path.join(DATA_PATH, filename_to_delete)
         if os.path.exists(file_path):
             os.remove(file_path)
+
+        # Update metadata
+        metadata = read_metadata()
+        if filename_to_delete in metadata:
+            del metadata[filename_to_delete]
+            write_metadata(metadata)
 
         # Initialize embeddings and vector store
         embeddings = OpenAIEmbeddings(
@@ -416,13 +448,31 @@ if selected_tab == '知识库管理':
     st.divider()
     st.subheader("3. 现有知识库文档")
 
-    if st.session_state.kb_built and os.path.exists(DATA_PATH) and os.listdir(DATA_PATH):
-        doc_list = os.listdir(DATA_PATH)
-        for doc_name in doc_list:
-            col1, col2 = st.columns([0.8, 0.2])
+    doc_metadata = read_metadata()
+
+    if doc_metadata:
+        sort_by = st.selectbox(
+            "排序方式",
+            options=["上传时间 (由新到旧)", "文件名 (A-Z)"],
+            index=0
+        )
+
+        doc_items = list(doc_metadata.items())
+
+        if sort_by == "文件名 (A-Z)":
+            doc_items.sort(key=lambda item: item[0])
+        else: # Default to sorting by time
+            doc_items.sort(key=lambda item: item[1]['upload_time'], reverse=True)
+
+        for doc_name, meta in doc_items:
+            upload_time = datetime.fromisoformat(meta['upload_time']).strftime("%Y-%m-%d %H:%M:%S")
+
+            col1, col2, col3 = st.columns([0.6, 0.2, 0.2])
             with col1:
                 st.text(doc_name)
             with col2:
+                st.text(upload_time)
+            with col3:
                 if st.button("移除", key=f"remove_{doc_name}", use_container_width=True):
                     delete_from_knowledge_base(doc_name)
                     st.rerun()
