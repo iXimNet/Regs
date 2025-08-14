@@ -83,8 +83,8 @@ def build_knowledge_base(uploaded_files):
 
         # 2. Split documents into chunks
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
+            chunk_size=400,
+            chunk_overlap=50,
             length_function=len
         )
         chunks = text_splitter.split_documents(documents)
@@ -211,7 +211,11 @@ def perform_audit(audit_file):
             )
 
             # Split the audit document to analyze it chunk by chunk
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=400,
+                chunk_overlap=50,
+                length_function=len
+            )
             audit_docs_for_splitting = [doc for doc in audit_docs if os.path.basename(doc.metadata.get('source', '')) == audit_file.name]
             audit_chunks = text_splitter.split_documents(audit_docs_for_splitting)
 
