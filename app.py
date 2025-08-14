@@ -422,14 +422,9 @@ if selected_tab == 'Institutional Audit':
                 consistency_section = "Could not parse consistency section."
                 suggestions_section = "Could not parse suggestions section."
 
-
-            sac.accordion(
-                items=[
-                    sac.AccordionItem(label='Compliance Analysis', icon='check-circle', children=[st.markdown(compliance_section)]),
-                    sac.AccordionItem(label='Internal Consistency Analysis', icon='copy', children=[st.markdown(consistency_section)]),
-                    sac.AccordionItem(label='Improvement Suggestions', icon='lightbulb', children=[st.markdown(suggestions_section)]),
-                ],
-                multiple=True,
-                open_all=True,
-                key="audit_report_accordion"
-            )
+            with st.expander("Compliance Analysis", expanded=True):
+                st.markdown(compliance_section)
+            with st.expander("Internal Consistency Analysis", expanded=True):
+                st.markdown(consistency_section)
+            with st.expander("Improvement Suggestions", expanded=True):
+                st.markdown(suggestions_section)
