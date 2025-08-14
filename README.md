@@ -55,19 +55,25 @@ pip install -r requirements.txt
 
 ### 4. Configure the Application
 
-Configuration is managed using a `.env` file for security and flexibility.
+Configuration is managed using a `.env` file for security and flexibility. This allows you to use different servers or providers for the main Language Model and the Embedding Model.
 
-1.  **Create a `.env` file**: In the root of the project, rename the `.env.example` file to `.env`.
+1.  **Create a `.env` file**: In the root of the project, rename or copy the `.env.example` file to `.env`.
     ```bash
-    mv .env.example .env
+    # On Linux/macOS
+    cp .env.example .env
     ```
 
-2.  **Edit the `.env` file**: Open the new `.env` file and customize the variables.
+2.  **Edit the `.env` file**: Open the new `.env` file and customize the variables for both the LLM and the Embedding Model.
 
-    -   `API_BASE_URL`: The full URL to your local LLM's OpenAI-compatible API endpoint.
-    -   `API_KEY`: The API key for your service. For many local models, this can be left as `not-needed`.
-    -   `LLM_MODEL_NAME`: The specific model identifier your LLM service uses for chat/instruct tasks.
-    -   `EMBEDDING_MODEL_NAME`: The specific model identifier for the text embedding model. **This must be a dedicated embedding model** for the application to function correctly.
+    **LLM Service (for analysis and generation):**
+    -   `LLM_API_BASE_URL`: The URL for your main language model's API.
+    -   `LLM_API_KEY`: The API key for this service.
+    -   `LLM_MODEL_NAME`: The identifier for the chat/instruct model you want to use.
+
+    **Embedding Service (for knowledge base vectorization):**
+    -   `EMBEDDING_API_BASE_URL`: The URL for your embedding model's API. *This can be the same as the LLM URL or different.*
+    -   `EMBEDDING_API_KEY`: The API key for this service.
+    -   `EMBEDDING_MODEL_NAME`: The identifier for the text embedding model. **This must be a dedicated embedding model** for the application to function correctly.
 
 ### 5. Run the Application
 

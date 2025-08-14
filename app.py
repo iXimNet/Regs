@@ -15,9 +15,14 @@ from langchain.schema.output_parser import StrOutputParser
 # Load environment variables from .env file
 load_dotenv()
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:1234/v1")
-API_KEY = os.getenv("API_KEY", "not-needed")
+# LLM Configuration
+LLM_API_BASE_URL = os.getenv("LLM_API_BASE_URL", "http://localhost:1234/v1")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "not-needed")
 LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "default-model")
+
+# Embedding Model Configuration
+EMBEDDING_API_BASE_URL = os.getenv("EMBEDDING_API_BASE_URL", "http://localhost:1234/v1")
+EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", "not-needed")
 EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "default-embedding-model")
 
 # Paths for data storage
@@ -87,8 +92,8 @@ def build_knowledge_base(uploaded_files):
         # 3. Create embeddings and ChromaDB vector store
         embeddings = OpenAIEmbeddings(
             model=EMBEDDING_MODEL_NAME,
-            openai_api_base=API_BASE_URL,
-            openai_api_key=API_KEY
+            openai_api_base=EMBEDDING_API_BASE_URL,
+            openai_api_key=EMBEDDING_API_KEY
         )
 
         try:
@@ -141,8 +146,8 @@ def perform_audit(audit_file):
             # Initialize embeddings and load the vector store
             embeddings = OpenAIEmbeddings(
                 model=EMBEDDING_MODEL_NAME,
-                openai_api_base=API_BASE_URL,
-                openai_api_key=API_KEY
+                openai_api_base=EMBEDDING_API_BASE_URL,
+                openai_api_key=EMBEDDING_API_KEY
             )
             vector_store = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
             retriever = vector_store.as_retriever(search_kwargs={"k": 3})
@@ -151,8 +156,8 @@ def perform_audit(audit_file):
             llm = ChatOpenAI(
                 model=LLM_MODEL_NAME,
                 temperature=0.1,
-                openai_api_base=API_BASE_URL,
-                openai_api_key=API_KEY
+                openai_api_base=LLM_API_BASE_URL,
+                openai_api_key=LLM_API_KEY
             )
 
             # This prompt guides the LLM to act as a compliance officer.
