@@ -99,6 +99,9 @@ def add_to_knowledge_base(uploaded_files):
         )
         chunks = text_splitter.split_documents(documents)
 
+        # Generate unique IDs for each chunk
+        ids = [f"{chunk.metadata['source']}_{i}" for i, chunk in enumerate(chunks)]
+
         # Create embeddings
         embeddings = OpenAIEmbeddings(
             model=EMBEDDING_MODEL_NAME,
@@ -110,13 +113,14 @@ def add_to_knowledge_base(uploaded_files):
             if os.path.exists(CHROMA_PATH):
                 # Add to an existing vector store
                 vector_store = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
-                vector_store.add_documents(chunks)
+                vector_store.add_documents(documents=chunks, ids=ids)
                 st.toast(f"成功将 {len(uploaded_files)} 个文档添加到知识库！")
             else:
                 # Create a new vector store
                 vector_store = Chroma.from_documents(
                     documents=chunks,
                     embedding=embeddings,
+                    ids=ids,
                     persist_directory=CHROMA_PATH
                 )
                 st.toast(f"成功创建知识库并添加了 {len(uploaded_files)} 个文档！")
@@ -142,6 +146,44 @@ def clear_knowledge_base():
         st.toast("知识库已成功清除！", icon="✅")
     except Exception as e:
         st.error(f"清除知识库时出错: {e}", icon="🚨")
+
+
+def delete_from_knowledge_base(filename_to_delete):
+    """
+    Deletes a specific document and its associated vectors from the knowledge base.
+    """
+    try:
+        # Delete the physical file
+        file_path = os.path.join(DATA_PATH, filename_to_delete)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+        # Initialize embeddings and vector store
+        embeddings = OpenAIEmbeddings(
+            model=EMBEDDING_MODEL_NAME,
+            openai_api_base=EMBEDDING_API_BASE_URL,
+            openai_api_key=EMBEDDING_API_KEY
+        )
+        vector_store = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
+
+        # Find documents with the matching source metadata
+        # Note: The source metadata from loaders is often an absolute path.
+        # We need to find all documents whose source *ends with* the filename.
+        all_docs = vector_store.get()
+        ids_to_delete = []
+        for i, metadata in enumerate(all_docs['metadatas']):
+            if metadata.get('source', '').endswith(filename_to_delete):
+                ids_to_delete.append(all_docs['ids'][i])
+
+        # Delete the found documents from ChromaDB
+        if ids_to_delete:
+            vector_store.delete(ids=ids_to_delete)
+            st.toast(f"已成功从知识库中移除文档: {filename_to_delete}", icon="✅")
+        else:
+            st.warning(f"在向量存储中未找到与 {filename_to_delete} 关联的数据。", icon="⚠️")
+
+    except Exception as e:
+        st.error(f"移除文档时出错: {e}", icon="🚨")
 
 
 def perform_audit(audit_file):
@@ -363,9 +405,21 @@ if selected_tab == '知识库管理':
             clear_knowledge_base()
             st.rerun()
 
-    if st.session_state.kb_built:
-        st.session_state.current_kb_step = 2
-        st.info("知识库已就绪，您可以切换到“制度审核”标签页开始审核。", icon="✅")
+    st.divider()
+    st.subheader("3. 现有知识库文档")
+
+    if st.session_state.kb_built and os.path.exists(DATA_PATH) and os.listdir(DATA_PATH):
+        doc_list = os.listdir(DATA_PATH)
+        for doc_name in doc_list:
+            col1, col2 = st.columns([0.8, 0.2])
+            with col1:
+                st.text(doc_name)
+            with col2:
+                if st.button("移除", key=f"remove_{doc_name}", use_container_width=True):
+                    delete_from_knowledge_base(doc_name)
+                    st.rerun()
+    else:
+        st.markdown("知识库中尚无文档。")
 
 
 # --- INSTITUTIONAL AUDIT TAB ---
