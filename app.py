@@ -50,38 +50,48 @@ def load_documents(directory_path):
             st.error(f"Error loading {filename}: {e}", icon="🚨")
     return documents
 
-def build_knowledge_base(uploaded_files):
+def add_to_knowledge_base(uploaded_files):
     """
-    Builds a vector knowledge base from uploaded files.
-    1. Saves files to a local directory.
-    2. Loads documents from the directory.
-    3. Splits documents into chunks.
-    4. Creates embeddings and stores them in ChromaDB.
+    Adds new documents to an existing or new vector knowledge base.
     """
     if not uploaded_files:
-        st.warning("Please upload at least one document.", icon="⚠️")
+        st.warning("请至少上传一个文档。", icon="⚠️")
         return
 
-    # Clear the existing data directory to ensure a fresh start
-    if os.path.exists(DATA_PATH):
-        shutil.rmtree(DATA_PATH)
+    # Create data directory if it doesn't exist to store permanent files
+    if not os.path.exists(DATA_PATH):
+        os.makedirs(DATA_PATH)
 
-    # Create the data directory
-    os.makedirs(DATA_PATH)
+    # Save uploaded files to a temporary directory for processing this batch
+    temp_dir = "temp_docs"
+    if os.path.exists(temp_dir):
+        shutil.rmtree(temp_dir)
+    os.makedirs(temp_dir)
 
-    # Save uploaded files to the data directory
+    saved_files_paths = []
     for file in uploaded_files:
-        with open(os.path.join(DATA_PATH, file.name), "wb") as f:
+        # Save to permanent storage
+        perm_path = os.path.join(DATA_PATH, file.name)
+        with open(perm_path, "wb") as f:
+            f.write(file.getbuffer())
+        # Save to temp dir for processing this batch only
+        temp_path = os.path.join(temp_dir, file.name)
+        with open(temp_path, "wb") as f:
             f.write(file.getbuffer())
 
-    with st.spinner("Processing documents... This may take a moment."):
-        # 1. Load documents
-        documents = load_documents(DATA_PATH)
+    with st.spinner("正在处理新文档，请稍候..."):
+        # Load only the new documents from the temporary directory
+        documents = load_documents(temp_dir)
         if not documents:
-            st.error("Could not load any documents. Please check the file formats.", icon="🚨")
+            st.error("无法加载任何新文档，请检查文件格式是否正确。", icon="🚨")
+            # Clean up temp dir
+            shutil.rmtree(temp_dir)
             return
 
-        # 2. Split documents into chunks
+        # Clean up temp dir after loading
+        shutil.rmtree(temp_dir)
+
+        # Split documents into chunks
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=400,
             chunk_overlap=50,
@@ -89,7 +99,7 @@ def build_knowledge_base(uploaded_files):
         )
         chunks = text_splitter.split_documents(documents)
 
-        # 3. Create embeddings and ChromaDB vector store
+        # Create embeddings
         embeddings = OpenAIEmbeddings(
             model=EMBEDDING_MODEL_NAME,
             openai_api_base=EMBEDDING_API_BASE_URL,
@@ -97,15 +107,24 @@ def build_knowledge_base(uploaded_files):
         )
 
         try:
-            vector_store = Chroma.from_documents(
-                documents=chunks,
-                embedding=embeddings,
-                persist_directory=CHROMA_PATH
-            )
-            vector_store.persist() # Ensure data is saved to disk
+            if os.path.exists(CHROMA_PATH):
+                # Add to an existing vector store
+                vector_store = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
+                vector_store.add_documents(chunks)
+                st.toast(f"成功将 {len(uploaded_files)} 个文档添加到知识库！")
+            else:
+                # Create a new vector store
+                vector_store = Chroma.from_documents(
+                    documents=chunks,
+                    embedding=embeddings,
+                    persist_directory=CHROMA_PATH
+                )
+                st.toast(f"成功创建知识库并添加了 {len(uploaded_files)} 个文档！")
+
+            vector_store.persist()
             st.session_state.kb_built = True
         except Exception as e:
-            st.error(f"An error occurred while building the vector store: {e}", icon="🚨")
+            st.error(f"向知识库添加文档时出错: {e}", icon="🚨")
             st.session_state.kb_built = False
 
 def clear_knowledge_base():
@@ -120,9 +139,9 @@ def clear_knowledge_base():
         st.session_state.kb_built = False
         st.session_state.current_kb_step = 0
         st.session_state.report = None
-        st.toast("Knowledge Base cleared successfully!", icon="✅")
+        st.toast("知识库已成功清除！", icon="✅")
     except Exception as e:
-        st.error(f"An error occurred while clearing the knowledge base: {e}", icon="🚨")
+        st.error(f"清除知识库时出错: {e}", icon="🚨")
 
 
 def perform_audit(audit_file):
@@ -131,7 +150,7 @@ def perform_audit(audit_file):
     Generates a structured report using the LLM.
     """
     try:
-        with st.spinner("Performing audit... This involves multiple AI calls and may take some time."):
+        with st.spinner("正在执行审核... 这将涉及多次调用AI模型，可能需要一些时间。"):
             # Save and load the audit document
             audit_file_path = os.path.join(DATA_PATH, audit_file.name)
             with open(audit_file_path, "wb") as f:
@@ -140,7 +159,7 @@ def perform_audit(audit_file):
             audit_docs = load_documents(DATA_PATH) # Reload to get the new doc
 
             if not audit_docs:
-                st.error("Failed to load the audit document.", icon="🚨")
+                st.error("加载待审核文档失败。", icon="🚨")
                 return
 
             # Initialize embeddings and load the vector store
@@ -221,8 +240,11 @@ def perform_audit(audit_file):
 
 
             analysis_results = []
+            progress_bar = st.progress(0, text="准备开始分析...")
             for i, chunk in enumerate(audit_chunks):
-                st.progress((i + 1) / len(audit_chunks), text=f"Analyzing chunk {i+1} of {len(audit_chunks)}...")
+                # Update progress bar with a summary of the current chunk
+                progress_text = f"正在分析第 {i+1}/{len(audit_chunks)} 部分: “{chunk.page_content[:50]}...”"
+                progress_bar.progress((i + 1) / len(audit_chunks), text=progress_text)
 
                 compliance_chain = ({"context": retriever, "clause": RunnablePassthrough()} | COMPLIANCE_PROMPT | llm | StrOutputParser())
                 consistency_chain = ({"context": retriever, "clause": RunnablePassthrough()} | CONSISTENCY_PROMPT | llm | StrOutputParser())
@@ -237,29 +259,29 @@ def perform_audit(audit_file):
                 )
 
             # Final report generation
-            st.progress(1.0, text="Synthesizing final report...")
+            progress_bar.progress(1.0, text="正在生成最终报告...")
 
             SUMMARY_PROMPT = ChatPromptTemplate.from_template(
                 """
-                **Role**: You are a Chief Compliance Officer tasked with creating a final audit report.
-                **Task**: Synthesize the following chunk-by-chunk analyses into a single, structured, and professional report.
+                **角色**: 您是一位首席合规官，负责撰写最终的审核报告。
+                **任务**: 将以下逐块的分析结果综合成一份结构化、专业的报告。
 
-                **Individual Analysis Results**:
+                **独立分析结果**:
                 ---
                 {analysis_results}
                 ---
 
-                **Report Generation Instructions**:
-                1.  Read all the individual analysis results provided.
-                2.  Generate a final report in Markdown format with the following four sections, using the exact headers:
-                    - `### Overall Conclusion`
-                    - `### Compliance Analysis`
-                    - `### Internal Consistency Analysis`
-                    - `### Improvement Suggestions`
-                3.  **Overall Conclusion**: Provide a high-level summary. Start with a risk assessment using one of these keywords: **High-Risk**, **Medium-Risk**, **Low-Risk**, or **Compliant**.
-                4.  **Compliance Analysis**: Consolidate all identified compliance issues into a bulleted list. If no issues, state that.
-                5.  **Internal Consistency Analysis**: Consolidate all identified inconsistencies into a bulleted list. If no issues, state that.
-                6.  **Improvement Suggestions**: Based on the issues found, provide actionable recommendations for improving the policy document.
+                **报告生成指令**:
+                1.  阅读所有提供的独立分析结果。
+                2.  以Markdown格式生成一份最终报告，包含以下四个部分，并使用确切的标题：
+                    - `### 总体结论`
+                    - `### 合规性分析`
+                    - `### 内部一致性分析`
+                    - `### 改进建议`
+                3.  **总体结论**: 提供一个高度概括的总结。以风险评估开始，使用以下关键词之一：**高风险**、**中风险**、**低风险**或**合规**。
+                4.  **合规性分析**: 将所有发现的合规性问题整合成一个无序列表。如果没有问题，请说明。
+                5.  **内部一致性分析**: 将所有发现的内部不一致问题整合成一个无序列表。如果没有问题，请说明。
+                6.  **改进建议**: 根据发现的问题，为改进制度文件提供可行的建议。
                 """
             )
 
@@ -268,17 +290,17 @@ def perform_audit(audit_file):
 
             st.session_state.report = final_report
     except Exception as e:
-        st.error(f"An error occurred during the audit process: {e}", icon="🚨")
-        st.error("This could be due to an issue with the local LLM connection or a problem with the document. Please check the console for more details.", icon="ℹ️")
+        st.error(f"审核过程中发生错误: {e}", icon="🚨")
+        st.error("这可能是由于与本地LLM的连接问题或文档格式问题。请检查控制台以获取更多详细信息。", icon="ℹ️")
         st.session_state.report = None
 
 
 # --- STREAMLIT UI ---
 
-st.set_page_config(page_title="Financial Compliance Assistant", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="金融合规智能审核助手", layout="wide", page_icon="🛡️")
 
-st.title("🛡️ Financial Compliance Intelligent Audit Assistant")
-st.caption("An AI-powered tool to ensure your internal policies meet regulatory standards and maintain internal consistency.")
+st.title("🛡️ 金融合规智能审核助手")
+st.caption("一个AI驱动的工具，旨在确保您的内部制度符合外部监管要求并保持内部一致性。")
 
 # Initialize session state variables
 if "kb_built" not in st.session_state:
@@ -291,140 +313,132 @@ if "current_kb_step" not in st.session_state:
 
 # Main UI Tabs
 selected_tab = sac.tabs([
-    sac.TabsItem(label='Knowledge Base Management', icon='database-add'),
-    sac.TabsItem(label='Institutional Audit', icon='file-search'),
-], align='center', variant='outline')
+    sac.TabsItem(label='制度审核', icon='file-search'),
+    sac.TabsItem(label='知识库管理', icon='database-add'),
+], index=0, align='center', variant='outline')
 
 
 # --- KNOWLEDGE BASE MANAGEMENT TAB ---
-if selected_tab == 'Knowledge Base Management':
-    st.header("Knowledge Base Management")
+if selected_tab == '知识库管理':
+    st.header("知识库管理")
 
-    sac.steps(
-        items=[
-            sac.StepsItem(title='Step 1', description='Upload reference documents (PDF, DOCX)'),
-            sac.StepsItem(title='Step 2', description='Process files and build vector store'),
-            sac.StepsItem(title='Step 3', description='Knowledge base is ready for auditing'),
-        ],
-        index=st.session_state.current_kb_step,
-        format_func='title',
-        placement='vertical'
-    )
+    st.info("在这里，您可以向知识库中增量添加或完全清空参考文档。知识库一旦建立，即可在“制度审核”页面使用。", icon="ℹ️")
 
-    st.subheader("1. Upload Reference Files")
-    st.markdown("Upload external regulations and historical internal policies. These will form the knowledge base for the audit.")
+    st.subheader("1. 上传新参考文件")
+    st.markdown("上传外部监管要求、内部历史制度等文件。这些文件将被**添加**到现有知识库中。")
     uploaded_files = st.file_uploader(
-        "Select files",
+        "选择一个或多个文件",
         type=['pdf', 'docx'],
         accept_multiple_files=True,
         label_visibility="collapsed"
     )
 
-    if uploaded_files:
-        st.session_state.current_kb_step = 1
-
-    st.subheader("2. Build or Clear Knowledge Base")
+    st.subheader("2. 更新或清空知识库")
 
     # Use columns for side-by-side buttons
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("Start Building Knowledge Base", type="primary", use_container_width=True):
+        if st.button("添加至知识库", type="primary", use_container_width=True):
             if uploaded_files:
-                build_knowledge_base(uploaded_files)
+                add_to_knowledge_base(uploaded_files)
                 if st.session_state.kb_built:
-                    st.session_state.current_kb_step = 2
                     sac.alert(
-                        label='Success!',
-                        description='The knowledge base has been successfully built and is ready for use.',
+                        label='成功!',
+                        description=f'已成功向上知识库中添加 {len(uploaded_files)} 个文档。',
                         color='success',
                         closable=True,
                         icon=True
                     )
             else:
                 sac.alert(
-                    label='No Files Uploaded',
-                    description='Please upload at least one reference document before building the knowledge base.',
+                    label='未上传文件',
+                    description='请先选择要添加的参考文件。',
                     color='warning',
                     closable=True,
                     icon=True
                 )
 
     with col2:
-        if st.button("Clear Knowledge Base", type="secondary", use_container_width=True):
+        if st.button("清空知识库", type="secondary", use_container_width=True):
             clear_knowledge_base()
             st.rerun()
 
     if st.session_state.kb_built:
         st.session_state.current_kb_step = 2
-        st.info("Knowledge base is ready. You can proceed to the 'Institutional Audit' tab.", icon="✅")
+        st.info("知识库已就绪，您可以切换到“制度审核”标签页开始审核。", icon="✅")
 
 
 # --- INSTITUTIONAL AUDIT TAB ---
-if selected_tab == 'Institutional Audit':
-    st.header("Institutional Audit")
+if selected_tab == '制度审核':
+    st.header("制度审核")
 
     if not st.session_state.kb_built:
         sac.alert(
-            label="Knowledge Base Not Ready",
-            description="Please build the knowledge base in the 'Knowledge Base Management' tab first.",
+            label="知识库未就绪",
+            description="请先在“知识库管理”标签页中构建知识库。",
             color='warning',
             icon=True
         )
     else:
-        st.subheader("1. Upload Document for Audit")
-        st.markdown("Upload the new internal policy document you want to audit.")
+        st.subheader("1. 上传待审核制度文件")
+        st.markdown("上传您需要审核的最新制度文件。")
         audit_file = st.file_uploader(
-            "Select a single PDF or DOCX file",
+            "选择一个PDF或DOCX文件",
             type=['pdf', 'docx'],
             accept_multiple_files=False,
             label_visibility="collapsed"
         )
 
-        st.subheader("2. Start the Audit")
-        if sac.buttons([sac.ButtonsItem(label='Begin Audit', icon='play-circle-fill', color='primary')], index=None):
+        st.subheader("2. 开始审核")
+        if sac.buttons([sac.ButtonsItem(label='开始审核', icon='play-circle-fill', color='primary')], index=None):
             if audit_file:
                 st.session_state.report = None # Clear previous report
                 perform_audit(audit_file)
             else:
-                sac.alert(label='No File Uploaded', description='Please upload a document to audit.', color='warning', closable=True, icon=True)
+                sac.alert(label='未上传文件', description='请上传一个待审核的文件。', color='warning', closable=True, icon=True)
 
         # --- DISPLAY AUDIT REPORT ---
         if st.session_state.report:
-            st.subheader("Audit Report")
+            st.subheader("审核报告")
 
             # Parse the report to display components
             report_content = st.session_state.report
 
             # Extract Overall Conclusion for the alert
-            conclusion_line = report_content.split("### Overall Conclusion")[1].split('\n')[1]
-            if "High-Risk" in conclusion_line:
-                alert_color, alert_icon = 'error', 'shield-exclamation'
-            elif "Medium-Risk" in conclusion_line:
-                alert_color, alert_icon = 'warning', 'shield-half'
-            else: # Low-Risk or Compliant
-                alert_color, alert_icon = 'success', 'shield-check'
+            try:
+                conclusion_line = report_content.split("### 总体结论")[1].split('\n')[1]
+                if "高风险" in conclusion_line:
+                    alert_color, alert_icon = 'error', 'shield-exclamation'
+                elif "中风险" in conclusion_line:
+                    alert_color, alert_icon = 'warning', 'shield-half'
+                else: # Low-Risk or Compliant
+                    alert_color, alert_icon = 'success', 'shield-check'
 
-            sac.alert(
-                label=f"Overall Conclusion: {conclusion_line.replace('**', '')}",
-                color=alert_color,
-                icon=alert_icon,
-                size='lg'
-            )
+                sac.alert(
+                    label=f"总体结论: {conclusion_line.replace('**', '')}",
+                    color=alert_color,
+                    icon=alert_icon,
+                    size='lg'
+                )
+            except IndexError:
+                # Could not parse conclusion, show a generic message
+                st.info("报告已生成，详情请见下方。")
+
 
             # Split report into sections for the collapse component
             try:
-                compliance_section = "###" + report_content.split("### Compliance Analysis")[1].split("### Internal Consistency Analysis")[0]
-                consistency_section = "###" + report_content.split("### Internal Consistency Analysis")[1].split("### Improvement Suggestions")[0]
-                suggestions_section = "###" + report_content.split("### Improvement Suggestions")[1]
+                compliance_section = "###" + report_content.split("### 合规性分析")[1].split("### 内部一致性分析")[0]
+                consistency_section = "###" + report_content.split("### 内部一致性分析")[1].split("### 改进建议")[0]
+                suggestions_section = "###" + report_content.split("### 改进建议")[1]
             except IndexError:
                 # Fallback if the LLM didn't follow the format perfectly
-                compliance_section = "Could not parse compliance section."
-                consistency_section = "Could not parse consistency section."
-                suggestions_section = "Could not parse suggestions section."
+                compliance_section = "无法解析合规性分析部分。"
+                consistency_section = "无法解析内部一致性分析部分。"
+                suggestions_section = "无法解析改进建议部分。"
 
-            with st.expander("Compliance Analysis", expanded=True):
+            with st.expander("合规性分析", expanded=True):
                 st.markdown(compliance_section)
-            with st.expander("Internal Consistency Analysis", expanded=True):
+            with st.expander("内部一致性分析", expanded=True):
                 st.markdown(consistency_section)
-            with st.expander("Improvement Suggestions", expanded=True):
+            with st.expander("改进建议", expanded=True):
                 st.markdown(suggestions_section)
