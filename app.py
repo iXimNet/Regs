@@ -370,11 +370,11 @@ def perform_audit(audit_file):
                 chunk_overlap=50,
                 length_function=len
             )
-            audit_docs_for_splitting = [doc for doc in audit_docs if os.path.basename(doc.metadata.get('source', '')) == audit_file.name]
+            audit_docs_for_splitting = [doc for doc in loaded_docs if os.path.basename(doc.metadata.get('source', '')) == audit_file.name]
             audit_chunks = text_splitter.split_documents(audit_docs_for_splitting)
 
 
-            analysis_results = []
+            clause_level_analysis = []
             progress_bar = st.progress(0, text="准备开始分析...")
             for i, chunk in enumerate(audit_chunks):
                 # Update progress bar with a summary of the current chunk
@@ -422,7 +422,6 @@ def perform_audit(audit_file):
             )
             audit_chunks = text_splitter.create_documents([full_text])
 
-            clause_level_analysis = []
             progress_bar = st.progress(0, text="准备开始分析...")
             for i, chunk in enumerate(audit_chunks):
                 # Update progress bar with a summary of the current chunk
