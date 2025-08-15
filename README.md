@@ -8,14 +8,16 @@ The application leverages a Retrieval-Augmented Generation (RAG) pipeline to pro
 
 - **Ant Design UI**: A modern and clean user interface built with Streamlit and the `streamlit-antd-components` library.
 - **Knowledge Base Management**: Upload multiple PDF and DOCX documents (e.g., external regulations, historical policies) to create a persistent local knowledge base.
-- **Intelligent Document Audit**: Upload a new policy document for a comprehensive audit.
-- **Structured Audit Reports**: The AI generates a detailed report that includes:
-    - An overall conclusion (e.g., High-Risk, Compliant).
-    - A specific analysis of compliance with external regulations.
-    - An analysis of consistency with internal historical documents.
-    - Actionable suggestions for improvement.
-- **Local LLM Integration**: Connects to any OpenAI-compatible local LLM service, ensuring data privacy and control.
-- **Clear & Reset**: Easily clear the existing knowledge base to start over from scratch.
+- **Multi-Stage Intelligent Audit**: Upload a policy document for a comprehensive, multi-stage audit that analyzes both document-level structure and clause-level details.
+- **Advanced RAG Pipeline**: The audit engine is now powered by an advanced Retrieval-Augmented Generation pipeline, including:
+    - **Document-Level Analysis**: A pre-audit step to check for structural completeness and major omissions.
+    - **Query Transformation**: Uses an LLM to rewrite policy clauses into better search queries.
+    - **Re-ranking**: Employs a Cross-Encoder model to re-rank search results for higher relevance.
+- **Comprehensive & Structured Reports**: The AI generates a detailed report that now includes a dedicated section on structural integrity, in addition to compliance, consistency, and suggestions.
+- **Flexible & Maintainable Knowledge Base**:
+    - Supports incremental additions.
+    - Allows for viewing, sorting, and deep deletion of specific documents.
+- **Separated LLM/Embedding Service Configuration**: `.env` file supports distinct endpoints for generation and embedding models, mirroring production environments.
 
 ## 🛠️ Tech Stack
 
@@ -27,7 +29,19 @@ The application leverages a Retrieval-Augmented Generation (RAG) pipeline to pro
 - **Vector Database**: ChromaDB
 - **LLM Integration**: `langchain-openai` for connecting to local, OpenAI-compatible APIs.
 
-## 🚀 Setup and Installation
+## 🚀 Audit Engine Workflow
+
+The application's audit process now follows a sophisticated multi-stage workflow to enhance accuracy and rigor:
+
+1.  **Document-Level Pre-Audit**: When an audit begins, the system first performs a high-level review of the entire document. It uses an LLM to check for structural integrity and completeness against the knowledge base, identifying potentially missing sections.
+2.  **Clause-Level Analysis (Chunk by Chunk)**: The system then processes the document chunk by chunk in a highly optimized RAG pipeline:
+    a.  **Query Transformation**: Each chunk is rewritten by an LLM into a more effective search query.
+    b.  **Retrieval**: The system fetches a broad set of 10 potentially relevant documents from the knowledge base.
+    c.  **Re-ranking**: A `CrossEncoder` model re-ranks the 10 documents for relevance, selecting the top 3.
+    d.  **Analysis**: The original chunk and the top 3 re-ranked documents are sent to the LLM for detailed compliance and consistency analysis.
+3.  **Comprehensive Report Synthesis**: Finally, the findings from both the document-level pre-audit and the detailed clause-level analysis are synthesized into a single, multi-part report.
+
+## 🛠️ Setup and Installation
 
 Follow these steps to get the application running on your local machine.
 
@@ -85,23 +99,24 @@ The application should now be open in your web browser.
 
 ## 📖 How to Use
 
-### 1. Knowledge Base Management
+### 1. 知识库管理 (Knowledge Base Management)
 
-1.  **Navigate** to the **Knowledge Base Management** tab.
-2.  **Upload Files**: Click the file uploader to select and upload your reference documents (PDFs and DOCXs). These can be external regulations or old internal policies.
-3.  **Build Knowledge Base**: Once your files are uploaded, click the **"Start Building Knowledge Base"** button. The app will process the files and store them in a local vector database. A success message will appear when it's done.
-4.  **Clear Knowledge Base**: If you wish to start over, click the **"Clear Knowledge Base"** button. This will delete all uploaded documents and the created database.
+1.  **Navigate** to the "知识库管理" tab to manage your reference documents.
+2.  **上传文件 (Upload Files)**: Use the file uploader to select one or more reference documents to add to the knowledge base.
+3.  **添加至知识库 (Add to KB)**: Click this button to process the new files and add them to the existing knowledge base.
+4.  **查看和移除 (View and Remove)**: The main area lists all documents in the KB, their upload times, and provides a "移除" (Remove) button for each. You can sort this list by name or date.
+5.  **清空知识库 (Clear KB)**: This button completely deletes all documents and vectors.
 
-### 2. Institutional Audit
+### 2. 制度审核 (Institutional Audit)
 
-1.  **Navigate** to the **Institutional Audit** tab. (This tab is only usable after a knowledge base has been built).
-2.  **Upload Audit File**: Click the file uploader to select the single policy document (PDF or DOCX) you wish to audit.
-3.  **Begin Audit**: Click the **"Begin Audit"** button. The application will analyze the document chunk by chunk against the knowledge base. This may take some time.
-4.  **Review Report**: Once the audit is complete, a structured report will appear. It will show an overall conclusion and collapsible sections for detailed analysis and suggestions.
+1.  **Navigate** to the "制度审核" tab (the default view).
+2.  **上传待审文件 (Upload Audit File)**: Select the single policy document you wish to audit.
+3.  **开始审核 (Begin Audit)**: Click the button to start the multi-stage audit process. This may take some time.
+4.  **查看报告 (Review Report)**: Once complete, a comprehensive report appears with sections for overall conclusions, structural analysis, compliance analysis, consistency, and suggestions.
 
 ## ⚠️ Known Limitations
 
 - **Prototype-Level Prompts**: The prompts used for the RAG chain are general-purpose. For production use, they would require significant tuning and optimization based on specific financial domains and regulatory nuances.
-- **Sequential Processing**: The audit process analyzes document chunks one by one. This can be slow for very large documents.
-- **LLM Dependency**: The quality of the audit report is highly dependent on the capability of the connected Large Language Model. A more powerful model will yield better results.
-- **No Document Management**: The UI does not currently support viewing or deleting individual documents from the knowledge base. You can only clear the entire database.
+- **Sequential Processing**: While the RAG pipeline is now more sophisticated, the clause-by-clause analysis is still sequential and can be slow for very large documents. Implementing asynchronous calls would be the next step for major performance gains.
+- **LLM Dependency**: The quality of the audit report is highly dependent on the capability of the connected Large Language Models. More powerful models will yield better results.
+- **Hardcoded Models**: The Cross-Encoder model (`cross-encoder/ms-marco-MiniLM-L-6-v2`) is currently hardcoded. This could be moved to the `.env` file for more flexibility.

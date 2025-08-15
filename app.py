@@ -12,6 +12,7 @@ from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema.runnable import RunnablePassthrough
 from langchain.schema.output_parser import StrOutputParser
+from sentence_transformers import CrossEncoder
 
 # --- CONFIGURATION ---
 # Load environment variables from .env file
@@ -226,23 +227,72 @@ def delete_from_knowledge_base(filename_to_delete):
         st.error(f"移除文档时出错: {e}", icon="🚨")
 
 
+def perform_document_level_audit(full_text, retriever, llm):
+    """
+    Performs a high-level audit on the entire document for structural
+    completeness and major omissions.
+    """
+    st.info("第一步：正在执行文档级完整性预审核...")
+
+    DOCUMENT_COMPLETENESS_PROMPT = ChatPromptTemplate.from_template(
+        """
+        **角色**: 您是一位资深合规审计师，擅长评估文档的结构完整性。
+        **任务**: 通读以下整个制度文档，并对照相关参考资料，评估其是否存在结构性缺陷或重大内容遗漏。
+
+        **待审核文档全文**:
+        ---
+        {document_text}
+        ---
+
+        **相关参考资料 (部分)**:
+        ---
+        {context}
+        ---
+
+        **分析指令**:
+        1.  总结文档的主要章节和核心内容。
+        2.  基于你的知识和提供的参考资料，判断此文档是否缺失了金融行业风险管理制度通常应包含的关键章节或主题（例如：风险识别、风险评估、风险监控、报告机制等）。
+        3.  明确指出可能缺失或不完整的部分。
+        4.  如果结构看起来是完整的，也请说明。
+        5.  你的分析将作为最终报告中“结构完整性分析”章节的内容。
+        """
+    )
+
+    chain = (
+        {"context": retriever, "document_text": RunnablePassthrough()}
+        | DOCUMENT_COMPLETENESS_PROMPT
+        | llm
+        | StrOutputParser()
+    )
+
+    result = chain.invoke(full_text)
+    st.success("文档级预审核完成。")
+    return result
+
+
 def perform_audit(audit_file):
     """
     Performs the compliance and consistency audit on the uploaded file.
     Generates a structured report using the LLM.
     """
     try:
-        with st.spinner("正在执行审核... 这将涉及多次调用AI模型，可能需要一些时间。"):
-            # Save and load the audit document
-            audit_file_path = os.path.join(DATA_PATH, audit_file.name)
+        with st.spinner("正在执行审核... 这将涉及多个阶段和多次AI调用，请耐心等待。"):
+            # Load the document
+            temp_dir = "temp_audit"
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            os.makedirs(temp_dir)
+            audit_file_path = os.path.join(temp_dir, audit_file.name)
             with open(audit_file_path, "wb") as f:
                 f.write(audit_file.getbuffer())
 
-            audit_docs = load_documents(DATA_PATH) # Reload to get the new doc
-
-            if not audit_docs:
+            loaded_docs = load_documents(temp_dir)
+            if not loaded_docs:
                 st.error("加载待审核文档失败。", icon="🚨")
+                shutil.rmtree(temp_dir)
                 return
+            full_text = "\n".join([doc.page_content for doc in loaded_docs])
+            shutil.rmtree(temp_dir)
 
             # Initialize embeddings and load the vector store
             embeddings = OpenAIEmbeddings(
@@ -251,7 +301,10 @@ def perform_audit(audit_file):
                 openai_api_key=EMBEDDING_API_KEY
             )
             vector_store = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
-            retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+            retriever = vector_store.as_retriever(search_kwargs={"k": 10}) # Retrieve more docs for re-ranking
+
+            # Initialize the Reranker model
+            reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
 
             # Initialize the LLM
             llm = ChatOpenAI(
@@ -264,50 +317,50 @@ def perform_audit(audit_file):
             # This prompt guides the LLM to act as a compliance officer.
             COMPLIANCE_PROMPT = ChatPromptTemplate.from_template(
                 """
-                **Role**: You are a professional financial compliance officer.
-                **Task**: Analyze the following clause from a new internal policy and check for potential conflicts with the provided external regulatory articles.
+                **角色**: 您是一位专业的金融合规官。
+                **任务**: 分析以下新的内部制度条款，并检查其与所提供的外部监管条款之间是否存在潜在冲突。
 
-                **New Policy Clause**:
+                **新制度条款**:
                 ---
                 {clause}
                 ---
 
-                **Relevant External Regulatory Articles**:
+                **相关外部监管条款**:
                 ---
                 {context}
                 ---
 
-                **Analysis Instructions**:
-                1.  Carefully compare the "New Policy Clause" with the "Relevant External Regulatory Articles".
-                2.  Identify any direct contradictions, subtle inconsistencies, or areas where the policy fails to meet regulatory standards.
-                3.  If a conflict is found, clearly state the conflict and cite the specific part of the regulation.
-                4.  If the clause is compliant, state that no issues were found.
-                5.  Your response must be concise and focused solely on compliance analysis.
+                **分析指令**:
+                1.  仔细比较“新制度条款”与“相关外部监管条款”。
+                2.  识别任何直接的矛盾、细微的不一致，或制度未能满足监管标准的地方。
+                3.  如果发现冲突，清晰地陈述冲突点，并引用相关的监管条文。
+                4.  如果条款合规，请说明未发现问题。
+                5.  您的回答必须简洁，并仅专注于合规性分析。
                 """
             )
 
             # This prompt guides the LLM to check for internal consistency.
             CONSISTENCY_PROMPT = ChatPromptTemplate.from_template(
                 """
-                **Role**: You are a senior policy analyst at a financial institution.
-                **Task**: Analyze the following clause from a new draft policy and check for inconsistencies with the provided historical internal policies.
+                **角色**: 您是金融机构的一名高级制度分析师。
+                **任务**: 分析以下新的制度草案条款，并检查其与所提供的历史内部制度之间是否存在不一致。
 
-                **New Policy Clause**:
+                **新制度条款**:
                 ---
                 {clause}
                 ---
 
-                **Relevant Historical Internal Policy Articles**:
+                **相关历史内部制度条款**:
                 ---
                 {context}
                 ---
 
-                **Analysis Instructions**:
-                1.  Compare the "New Policy Clause" with the "Relevant Historical Internal Policy Articles".
-                2.  Identify any contradictions, significant deviations, or duplications.
-                3.  If an inconsistency is found, describe it clearly and reference the historical policy.
-                4.  If the clause is consistent, state that.
-                5.  Your response must be concise and focused solely on internal consistency.
+                **分析指令**:
+                1.  比较“新制度条款”与“相关历史内部制度条款”。
+                2.  识别任何矛盾、重大偏离或重复之处。
+                3.  如果发现不一致，请清晰地描述它，并引用相关的历史制度。
+                4.  如果条款是一致的，请说明。
+                5.  您的回答必须简洁，并仅专注于内部一致性分析。
                 """
             )
 
@@ -340,35 +393,110 @@ def perform_audit(audit_file):
                     f"**Internal Consistency Check:**\n{consistency_result}\n\n---\n"
                 )
 
-            # Final report generation
-            progress_bar.progress(1.0, text="正在生成最终报告...")
+            # --- STAGE 1: Document-Level Pre-Audit ---
+            document_level_analysis = perform_document_level_audit(full_text, retriever, llm)
+
+            # --- STAGE 2: Clause-Level Analysis (The original process) ---
+            st.info("第二步：正在执行条款级（分片）详细审核...")
+
+            QUERY_TRANSFORMATION_PROMPT = ChatPromptTemplate.from_template(
+                """
+                **角色**: 您是一位精通信息检索的AI助手。
+                **任务**: 将以下文本片段转换成一个更适合用于向量数据库检索的、简洁明了的核心问题或关键词短语。
+
+                **原始文本片段**:
+                ---
+                {clause}
+                ---
+
+                **转换后的查询**:
+                """
+            )
+
+            query_transformation_chain = QUERY_TRANSFORMATION_PROMPT | llm | StrOutputParser()
+
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=400,
+                chunk_overlap=50,
+                length_function=len
+            )
+            audit_chunks = text_splitter.create_documents([full_text])
+
+            clause_level_analysis = []
+            progress_bar = st.progress(0, text="准备开始分析...")
+            for i, chunk in enumerate(audit_chunks):
+                # Update progress bar with a summary of the current chunk
+                progress_text = f"正在分析第 {i+1}/{len(audit_chunks)} 部分: “{chunk.page_content[:50]}...”"
+                progress_bar.progress((i + 1) / len(audit_chunks), text=progress_text)
+
+                # 2.1: Query Transformation
+                transformed_query = query_transformation_chain.invoke({"clause": chunk.page_content})
+
+                # 2.2: Retrieval
+                retrieved_docs = retriever.get_relevant_documents(transformed_query)
+
+                # 2.3: Re-ranking
+                rerank_pairs = [[transformed_query, doc.page_content] for doc in retrieved_docs]
+                scores = reranker.predict(rerank_pairs)
+                doc_with_scores = list(zip(retrieved_docs, scores))
+                doc_with_scores.sort(key=lambda x: x[1], reverse=True)
+                reranked_docs = [doc for doc, score in doc_with_scores[:3]] # Keep top 3
+
+                # 2.4: Analysis using re-ranked context
+                context = "\n\n---\n\n".join([doc.page_content for doc in reranked_docs])
+
+                compliance_chain = COMPLIANCE_PROMPT | llm | StrOutputParser()
+                consistency_chain = CONSISTENCY_PROMPT | llm | StrOutputParser()
+
+                compliance_result = compliance_chain.invoke({"clause": chunk.page_content, "context": context})
+                consistency_result = consistency_chain.invoke({"clause": chunk.page_content, "context": context})
+
+                clause_level_analysis.append(
+                    f"### 分析文档片段 (内容以 “{chunk.page_content[:100]}...” 开始):\n\n"
+                    f"**合规性检查:**\n{compliance_result}\n\n"
+                    f"**内部一致性检查:**\n{consistency_result}\n\n---\n"
+                )
+
+            # --- STAGE 3: Final Report Generation ---
+            st.info("第三步：正在综合所有分析结果并生成最终报告...")
 
             SUMMARY_PROMPT = ChatPromptTemplate.from_template(
                 """
-                **角色**: 您是一位首席合规官，负责撰写最终的审核报告。
-                **任务**: 将以下逐块的分析结果综合成一份结构化、专业的报告。
+                **角色**: 您是一位首席合规官，负责撰写一份全面、多层次的最终审核报告。
+                **任务**: 将“文档级预审核”的宏观发现和“条款级详细分析”的微观结果，综合成一份结构化、专业的报告。
 
-                **独立分析结果**:
+                **第一部分：文档级完整性分析**:
                 ---
-                {analysis_results}
+                {document_level_analysis}
+                ---
+
+                **第二部分：逐项条款详细分析结果**:
+                ---
+                {clause_level_analysis}
                 ---
 
                 **报告生成指令**:
-                1.  阅读所有提供的独立分析结果。
-                2.  以Markdown格式生成一份最终报告，包含以下四个部分，并使用确切的标题：
+                1.  首先，仔细阅读并理解“文档级完整性分析”的宏观结论。
+                2.  然后，仔细阅读逐项的详细分析。
+                3.  最后，以Markdown格式生成一份最终报告，包含以下五个部分，并使用确切的标题：
                     - `### 总体结论`
+                    - `### 结构完整性分析`
                     - `### 合规性分析`
                     - `### 内部一致性分析`
                     - `### 改进建议`
-                3.  **总体结论**: 提供一个高度概括的总结。以风险评估开始，使用以下关键词之一：**高风险**、**中风险**、**低风险**或**合规**。
-                4.  **合规性分析**: 将所有发现的合规性问题整合成一个无序列表。如果没有问题，请说明。
-                5.  **内部一致性分析**: 将所有发现的内部不一致问题整合成一个无序列表。如果没有问题，请说明。
-                6.  **改进建议**: 根据发现的问题，为改进制度文件提供可行的建议。
+                4.  **总体结论**: 结合宏观和微观的分析，提供一个高度概括的总结。以风险评估开始，使用以下关键词之一：**高风险**、**中风险**、**低风险**或**合规**。
+                5.  **结构完整性分析**: 直接总结或引用“文档级完整性分析”的结果。
+                6.  **合规性分析**: 整合所有“条款级详细分析”中发现的合规性问题，形成一个无序列表。
+                7.  **内部一致性分析**: 整合所有“条款级详细分析”中发现的内部不一致问题，形成一个无序列表。
+                8.  **改进建议**: 结合所有发现的问题（包括结构性和条款性问题），为改进制度文件提供全面、可行的建议。
                 """
             )
 
             final_report_chain = SUMMARY_PROMPT | llm | StrOutputParser()
-            final_report = final_report_chain.invoke({"analysis_results": "\n".join(analysis_results)})
+            final_report = final_report_chain.invoke({
+                "document_level_analysis": document_level_analysis,
+                "clause_level_analysis": "\n".join(clause_level_analysis)
+            })
 
             st.session_state.report = final_report
     except Exception as e:
@@ -539,15 +667,19 @@ if selected_tab == '制度审核':
 
             # Split report into sections for the collapse component
             try:
+                structure_section = "###" + report_content.split("### 结构完整性分析")[1].split("### 合规性分析")[0]
                 compliance_section = "###" + report_content.split("### 合规性分析")[1].split("### 内部一致性分析")[0]
                 consistency_section = "###" + report_content.split("### 内部一致性分析")[1].split("### 改进建议")[0]
                 suggestions_section = "###" + report_content.split("### 改进建议")[1]
             except IndexError:
                 # Fallback if the LLM didn't follow the format perfectly
+                structure_section = "无法解析结构完整性分析部分。"
                 compliance_section = "无法解析合规性分析部分。"
                 consistency_section = "无法解析内部一致性分析部分。"
                 suggestions_section = "无法解析改进建议部分。"
 
+            with st.expander("结构完整性分析", expanded=True):
+                st.markdown(structure_section)
             with st.expander("合规性分析", expanded=True):
                 st.markdown(compliance_section)
             with st.expander("内部一致性分析", expanded=True):
