@@ -13,12 +13,16 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.schema.runnable import RunnablePassthrough
 from langchain.schema.output_parser import StrOutputParser
 from sentence_transformers import CrossEncoder
+import logging
 
 # --- CONFIGURATION ---
 # Load environment variables from .env file
 load_dotenv()
 
-# LLM Configuration
+# --- LOGGING SETUP ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# --- LLM AND EMBEDDING CONFIGURATION ---
 LLM_API_BASE_URL = os.getenv("LLM_API_BASE_URL", "http://localhost:1234/v1")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "not-needed")
 LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "default-model")
@@ -72,8 +76,10 @@ def add_to_knowledge_base(uploaded_files):
     """
     Adds new documents to an existing or new vector knowledge base.
     """
+    logging.info(f"Attempting to add {len(uploaded_files)} files to the knowledge base.")
     if not uploaded_files:
         st.warning("请至少上传一个文档。", icon="⚠️")
+        logging.warning("add_to_knowledge_base called with no files.")
         return
 
     # Create data directory if it doesn't exist to store permanent files
@@ -108,15 +114,18 @@ def add_to_knowledge_base(uploaded_files):
 
     with st.spinner("正在处理新文档，请稍候..."):
         # Load only the new documents from the temporary directory
+        logging.info(f"Loading documents from temporary directory: {temp_dir}")
         documents = load_documents(temp_dir)
         if not documents:
             st.error("无法加载任何新文档，请检查文件格式是否正确。", icon="🚨")
+            logging.error("No documents could be loaded from the uploaded files.")
             # Clean up temp dir
             shutil.rmtree(temp_dir)
             return
 
         # Clean up temp dir after loading
         shutil.rmtree(temp_dir)
+        logging.info("Temporary directory cleaned up.")
 
         # Split documents into chunks
         text_splitter = RecursiveCharacterTextSplitter(
@@ -125,6 +134,7 @@ def add_to_knowledge_base(uploaded_files):
             length_function=len
         )
         chunks = text_splitter.split_documents(documents)
+        logging.info(f"Split {len(documents)} documents into {len(chunks)} chunks.")
 
         # Generate unique IDs for each chunk
         ids = [f"{chunk.metadata['source']}_{i}" for i, chunk in enumerate(chunks)]
@@ -170,11 +180,14 @@ def clear_knowledge_base():
     """
     Deletes the data and vector store directories, effectively clearing the knowledge base.
     """
+    logging.info("Clearing the knowledge base.")
     try:
         if os.path.exists(CHROMA_PATH):
             shutil.rmtree(CHROMA_PATH)
+            logging.info(f"Removed ChromaDB directory: {CHROMA_PATH}")
         if os.path.exists(DATA_PATH):
             shutil.rmtree(DATA_PATH)
+            logging.info(f"Removed data directory: {DATA_PATH}")
         st.session_state.kb_built = False
         st.session_state.current_kb_step = 0
         st.session_state.report = None
@@ -187,11 +200,13 @@ def delete_from_knowledge_base(filename_to_delete):
     """
     Deletes a specific document and its associated vectors from the knowledge base.
     """
+    logging.info(f"Attempting to delete document: {filename_to_delete}")
     try:
         # Delete the physical file
         file_path = os.path.join(DATA_PATH, filename_to_delete)
         if os.path.exists(file_path):
             os.remove(file_path)
+            logging.info(f"Deleted file from data directory: {file_path}")
 
         # Update metadata
         metadata = read_metadata()
@@ -219,11 +234,14 @@ def delete_from_knowledge_base(filename_to_delete):
         # Delete the found documents from ChromaDB
         if ids_to_delete:
             vector_store.delete(ids=ids_to_delete)
+            logging.info(f"Deleted {len(ids_to_delete)} vectors from ChromaDB for document: {filename_to_delete}")
             st.toast(f"已成功从知识库中移除文档: {filename_to_delete}", icon="✅")
         else:
+            logging.warning(f"No vectors found in ChromaDB for document: {filename_to_delete}")
             st.warning(f"在向量存储中未找到与 {filename_to_delete} 关联的数据。", icon="⚠️")
 
     except Exception as e:
+        logging.error(f"Error during deletion of {filename_to_delete}: {e}")
         st.error(f"移除文档时出错: {e}", icon="🚨")
 
 
@@ -275,6 +293,7 @@ def perform_audit(audit_file):
     Performs the compliance and consistency audit on the uploaded file.
     Generates a structured report using the LLM.
     """
+    logging.info(f"Starting full audit for file: {audit_file.name}")
     try:
         with st.spinner("正在执行审核... 这将涉及多个阶段和多次AI调用，请耐心等待。"):
             # Load the document
@@ -286,13 +305,16 @@ def perform_audit(audit_file):
             with open(audit_file_path, "wb") as f:
                 f.write(audit_file.getbuffer())
 
+            logging.info("Loading audit document text...")
             loaded_docs = load_documents(temp_dir)
             if not loaded_docs:
                 st.error("加载待审核文档失败。", icon="🚨")
+                logging.error(f"Failed to load audit document: {audit_file.name}")
                 shutil.rmtree(temp_dir)
                 return
             full_text = "\n".join([doc.page_content for doc in loaded_docs])
             shutil.rmtree(temp_dir)
+            logging.info("Audit document loaded and temp directory cleaned up.")
 
             # Initialize embeddings and load the vector store
             embeddings = OpenAIEmbeddings(
@@ -364,35 +386,6 @@ def perform_audit(audit_file):
                 """
             )
 
-            # Split the audit document to analyze it chunk by chunk
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=400,
-                chunk_overlap=50,
-                length_function=len
-            )
-            audit_docs_for_splitting = [doc for doc in loaded_docs if os.path.basename(doc.metadata.get('source', '')) == audit_file.name]
-            audit_chunks = text_splitter.split_documents(audit_docs_for_splitting)
-
-
-            clause_level_analysis = []
-            progress_bar = st.progress(0, text="准备开始分析...")
-            for i, chunk in enumerate(audit_chunks):
-                # Update progress bar with a summary of the current chunk
-                progress_text = f"正在分析第 {i+1}/{len(audit_chunks)} 部分: “{chunk.page_content[:50]}...”"
-                progress_bar.progress((i + 1) / len(audit_chunks), text=progress_text)
-
-                compliance_chain = ({"context": retriever, "clause": RunnablePassthrough()} | COMPLIANCE_PROMPT | llm | StrOutputParser())
-                consistency_chain = ({"context": retriever, "clause": RunnablePassthrough()} | CONSISTENCY_PROMPT | llm | StrOutputParser())
-
-                compliance_result = compliance_chain.invoke(chunk.page_content)
-                consistency_result = consistency_chain.invoke(chunk.page_content)
-
-                clause_level_analysis.append(
-                    f"### Analysis of Document Section (starting with: '{chunk.page_content[:100]}...')\n\n"
-                    f"**Compliance Check:**\n{compliance_result}\n\n"
-                    f"**Internal Consistency Check:**\n{consistency_result}\n\n---\n"
-                )
-
             # --- STAGE 1: Document-Level Pre-Audit ---
             document_level_analysis = perform_document_level_audit(full_text, retriever, llm)
 
@@ -428,27 +421,36 @@ def perform_audit(audit_file):
                 progress_text = f"正在分析第 {i+1}/{len(audit_chunks)} 部分: “{chunk.page_content[:50]}...”"
                 progress_bar.progress((i + 1) / len(audit_chunks), text=progress_text)
 
+                logging.info(f"Processing chunk {i+1}/{len(audit_chunks)}...")
                 # 2.1: Query Transformation
+                logging.info("Transforming query...")
                 transformed_query = query_transformation_chain.invoke({"clause": chunk.page_content})
+                logging.info(f"Transformed query: {transformed_query}")
 
                 # 2.2: Retrieval
+                logging.info("Retrieving documents...")
                 retrieved_docs = retriever.get_relevant_documents(transformed_query)
+                logging.info(f"Retrieved {len(retrieved_docs)} documents for re-ranking.")
 
                 # 2.3: Re-ranking
+                logging.info("Re-ranking retrieved documents...")
                 rerank_pairs = [[transformed_query, doc.page_content] for doc in retrieved_docs]
                 scores = reranker.predict(rerank_pairs)
                 doc_with_scores = list(zip(retrieved_docs, scores))
                 doc_with_scores.sort(key=lambda x: x[1], reverse=True)
                 reranked_docs = [doc for doc, score in doc_with_scores[:3]] # Keep top 3
+                logging.info(f"Kept top {len(reranked_docs)} documents after re-ranking.")
 
                 # 2.4: Analysis using re-ranked context
                 context = "\n\n---\n\n".join([doc.page_content for doc in reranked_docs])
 
+                logging.info("Invoking compliance and consistency analysis chains...")
                 compliance_chain = COMPLIANCE_PROMPT | llm | StrOutputParser()
                 consistency_chain = CONSISTENCY_PROMPT | llm | StrOutputParser()
 
                 compliance_result = compliance_chain.invoke({"clause": chunk.page_content, "context": context})
                 consistency_result = consistency_chain.invoke({"clause": chunk.page_content, "context": context})
+                logging.info(f"Chunk {i+1} analysis complete.")
 
                 clause_level_analysis.append(
                     f"### 分析文档片段 (内容以 “{chunk.page_content[:100]}...” 开始):\n\n"
@@ -458,6 +460,7 @@ def perform_audit(audit_file):
 
             # --- STAGE 3: Final Report Generation ---
             st.info("第三步：正在综合所有分析结果并生成最终报告...")
+            logging.info("Synthesizing final report...")
 
             SUMMARY_PROMPT = ChatPromptTemplate.from_template(
                 """
@@ -498,7 +501,9 @@ def perform_audit(audit_file):
             })
 
             st.session_state.report = final_report
+            logging.info("Full audit process complete.")
     except Exception as e:
+        logging.error(f"An error occurred during the audit process: {e}", exc_info=True)
         st.error(f"审核过程中发生错误: {e}", icon="🚨")
         st.error("这可能是由于与本地LLM的连接问题或文档格式问题。请检查控制台以获取更多详细信息。", icon="ℹ️")
         st.session_state.report = None
