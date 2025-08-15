@@ -143,7 +143,8 @@ def add_to_knowledge_base(uploaded_files):
         embeddings = OpenAIEmbeddings(
             model=EMBEDDING_MODEL_NAME,
             openai_api_base=EMBEDDING_API_BASE_URL,
-            openai_api_key=EMBEDDING_API_KEY
+            openai_api_key=EMBEDDING_API_KEY,
+            check_embedding_ctx_length=False
         )
 
         try:
@@ -245,7 +246,8 @@ def delete_from_knowledge_base(filename_to_delete):
         embeddings = OpenAIEmbeddings(
             model=EMBEDDING_MODEL_NAME,
             openai_api_base=EMBEDDING_API_BASE_URL,
-            openai_api_key=EMBEDDING_API_KEY
+            openai_api_key=EMBEDDING_API_KEY,
+            check_embedding_ctx_length=False
         )
         vector_store = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
 
@@ -347,7 +349,8 @@ def perform_audit(audit_file):
             embeddings = OpenAIEmbeddings(
                 model=EMBEDDING_MODEL_NAME,
                 openai_api_base=EMBEDDING_API_BASE_URL,
-                openai_api_key=EMBEDDING_API_KEY
+                openai_api_key=EMBEDDING_API_KEY,
+                check_embedding_ctx_length=False
             )
             vector_store = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
             retriever = vector_store.as_retriever(search_kwargs={"k": 10}) # Retrieve more docs for re-ranking
