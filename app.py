@@ -149,32 +149,59 @@ def add_to_knowledge_base(uploaded_files):
         try:
             vector_store = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
 
-            # Process documents in batches to avoid overwhelming the server
             batch_size = 16
+            total_batches = (len(chunks) + batch_size - 1) // batch_size
+            failed_batches = 0
+
             for i in range(0, len(chunks), batch_size):
+                current_batch_num = (i // batch_size) + 1
                 batch_chunks = chunks[i:i + batch_size]
                 batch_ids = ids[i:i + batch_size]
 
-                if i == 0 and not os.path.exists(CHROMA_PATH):
-                     # Create a new vector store with the first batch
-                    Chroma.from_documents(
-                        documents=batch_chunks,
-                        embedding=embeddings,
-                        ids=batch_ids,
-                        persist_directory=CHROMA_PATH
-                    )
-                else:
-                    # Add subsequent batches to the existing vector store
-                    vector_store.add_documents(documents=batch_chunks, ids=batch_ids)
-
-                st.toast(f"已处理 {i + len(batch_chunks)} / {len(chunks)} 个文本片段...")
+                try:
+                    st.toast(f"正在处理第 {current_batch_num}/{total_batches} 批文本片段...")
+                    if i == 0 and not os.path.exists(CHROMA_PATH):
+                        logging.info(f"Creating new vector store with batch {current_batch_num}...")
+                        Chroma.from_documents(
+                            documents=batch_chunks,
+                            embedding=embeddings,
+                            ids=batch_ids,
+                            persist_directory=CHROMA_PATH
+                        )
+                    else:
+                        logging.info(f"Adding batch {current_batch_num} to existing vector store...")
+                        vector_store.add_documents(documents=batch_chunks, ids=batch_ids)
+                except Exception as batch_error:
+                    failed_batches += 1
+                    logging.error(f"处理批次 {current_batch_num} 时出错: {batch_error}")
+                    logging.warning(f"跳过批次 {current_batch_num}，将继续处理下一个批次。")
+                    continue
 
             vector_store.persist()
             st.session_state.kb_built = True
-            st.toast(f"成功处理了 {len(uploaded_files)} 个文档！", icon="✅")
+
+            # Final status message
+            if failed_batches == 0:
+                st.toast(f"成功处理了 {len(uploaded_files)} 个文档的所有文本片段！", icon="✅")
+            else:
+                st.warning(
+                    f"{failed_batches}/{total_batches} 个批次处理失败。部分文档可能未被完整索引。"
+                    "详情请查看控制台日志。",
+                    icon="⚠️"
+                )
+                # If all batches failed, it's likely the whole document is problematic.
+                # We can remove it from metadata to avoid UI confusion.
+                if failed_batches == total_batches:
+                    logging.warning(f"All batches failed for {len(uploaded_files)} documents. Removing from metadata.")
+                    metadata = read_metadata()
+                    for file in uploaded_files:
+                        if file.name in metadata:
+                            del metadata[file.name]
+                    write_metadata(metadata)
+
+
         except Exception as e:
-            st.error(f"向知识库添加文档时出错: {e}", icon="🚨")
-            # Do not set kb_built to False on a failed addition
+            st.error(f"向知识库添加文档时发生严重错误: {e}", icon="🚨")
 
 def clear_knowledge_base():
     """
