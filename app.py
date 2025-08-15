@@ -486,6 +486,8 @@ def perform_audit(audit_file):
                     f"**内部一致性检查:**\n{consistency_result}\n\n---\n"
                 )
 
+            progress_bar.progress(1.0, text="条款级分析完成。")
+
             # --- STAGE 3: Final Report Generation ---
             st.info("第三步：正在综合所有分析结果并生成最终报告...")
             logging.info("Synthesizing final report...")
@@ -528,8 +530,12 @@ def perform_audit(audit_file):
                 "clause_level_analysis": "\n".join(clause_level_analysis)
             })
 
-            st.session_state.report = final_report
+            # Clean up potential LLM artifacts
+            cleaned_report = final_report.strip().removesuffix("undefined").strip()
+
+            st.session_state.report = cleaned_report
             logging.info("Full audit process complete.")
+            st.success("审核报告已成功生成！")
     except Exception as e:
         logging.error(f"An error occurred during the audit process: {e}", exc_info=True)
         st.error(f"审核过程中发生错误: {e}", icon="🚨")
@@ -718,3 +724,7 @@ if selected_tab == '制度审核':
                 st.markdown(consistency_section)
             with st.expander("改进建议", expanded=True):
                 st.markdown(suggestions_section)
+
+            st.divider()
+            with st.expander("一键复制完整报告 (Markdown格式)"):
+                st.code(report_content, language="markdown")
