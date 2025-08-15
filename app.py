@@ -442,6 +442,7 @@ def perform_audit(audit_file):
             )
             audit_chunks = text_splitter.create_documents([full_text])
 
+            clause_level_analysis = []
             progress_bar = st.progress(0, text="准备开始分析...")
             for i, chunk in enumerate(audit_chunks):
                 # Update progress bar with a summary of the current chunk
