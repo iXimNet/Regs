@@ -387,7 +387,7 @@ def perform_audit(audit_file):
                 compliance_result = compliance_chain.invoke(chunk.page_content)
                 consistency_result = consistency_chain.invoke(chunk.page_content)
 
-                analysis_results.append(
+                clause_level_analysis.append(
                     f"### Analysis of Document Section (starting with: '{chunk.page_content[:100]}...')\n\n"
                     f"**Compliance Check:**\n{compliance_result}\n\n"
                     f"**Internal Consistency Check:**\n{consistency_result}\n\n---\n"
